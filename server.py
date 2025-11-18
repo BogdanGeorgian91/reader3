@@ -9,12 +9,16 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from reader3 import Book, BookMetadata, ChapterContent, TOCEntry
+from claude_code_detect import get_claude_code_status
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
 # Where are the book folders located?
 BOOKS_DIR = "."
+
+# Get Claude Code status once at startup
+CLAUDE_CODE_STATUS = get_claude_code_status()
 
 @lru_cache(maxsize=10)
 def load_book_cached(folder_name: str) -> Optional[Book]:
@@ -53,7 +57,14 @@ async def library_view(request: Request):
                         "chapters": len(book.spine)
                     })
 
-    return templates.TemplateResponse("library.html", {"request": request, "books": books})
+    return templates.TemplateResponse(
+        "library.html",
+        {
+            "request": request,
+            "books": books,
+            "claude_code_enabled": CLAUDE_CODE_STATUS["enabled"]
+        }
+    )
 
 @app.get("/read/{book_id}", response_class=HTMLResponse)
 async def redirect_to_first_chapter(book_id: str):
@@ -83,7 +94,8 @@ async def read_chapter(request: Request, book_id: str, chapter_index: int):
         "chapter_index": chapter_index,
         "book_id": book_id,
         "prev_idx": prev_idx,
-        "next_idx": next_idx
+        "next_idx": next_idx,
+        "claude_code_enabled": CLAUDE_CODE_STATUS["enabled"]
     })
 
 @app.get("/read/{book_id}/images/{image_name}")

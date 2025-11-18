@@ -43,6 +43,12 @@
     <!-- SIDEBAR -->
     <div id="sidebar">
         <a href="/" class="nav-home">← Back to Library</a>
+        {% if claude_code_enabled %}
+        <div style="display: inline-flex; align-items: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 6px 10px; border-radius: 16px; font-size: 0.75em; font-weight: 500; margin-bottom: 15px;">
+            <span style="display: inline-block; width: 6px; height: 6px; background: #4ade80; border-radius: 50%; margin-right: 5px;"></span>
+            Claude Code
+        </div>
+        {% endif %}
         <div class="nav-header">{{ book.metadata.title }}</div>
 
         <!-- Recursive Macro for TOC -->
