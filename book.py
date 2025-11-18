@@ -25,8 +25,6 @@ import uvicorn
 
 from claude_code_detect import get_claude_code_status
 from book_info import (
-    get_book_summary,
-    get_ai_prephrase,
     get_ai_conclusion,
     get_paragraph_summaries,
 )
@@ -263,8 +261,9 @@ def save_to_pickle(book: Book, output_dir: str):
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-BOOKS_DIR = "."
+BOOKS_DIR = ".data"
 CLAUDE_CODE_STATUS = get_claude_code_status()
+CURRENT_BOOK_FOLDER = None  # Will be set when server starts
 
 
 @lru_cache(maxsize=1)
@@ -294,10 +293,9 @@ def _get_book_folder() -> Optional[str]:
 
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
-    book_folder = _get_book_folder()
-    if not book_folder:
+    if not CURRENT_BOOK_FOLDER:
         raise HTTPException(status_code=404, detail="No book found")
-    return await read_chapter(request=request, book_id=book_folder, chapter_index=0)
+    return await read_chapter(request=request, book_id=CURRENT_BOOK_FOLDER, chapter_index=0)
 
 
 @app.get("/read/{book_id}", response_class=HTMLResponse)
@@ -319,26 +317,36 @@ async def read_chapter(request: Request, book_id: str, chapter_index: int):
     prev_idx = chapter_index - 1 if chapter_index > 0 else None
     next_idx = chapter_index + 1 if chapter_index < len(book.spine) - 1 else None
 
-    content_sample = book.spine[0].content[:1000] if book.spine else ""
-    summary = get_book_summary(
-        book_id,
-        book.metadata.title,
-        ", ".join(book.metadata.authors),
-        content_sample
-    )
+    # Extract clean text from current chapter (always needed for prephrase)
+    from book_info import _extract_text_content, get_book_summary_cached, get_chapter_prephrase, _load_cached_summary
+    chapter_clean = _extract_text_content(current_chapter.content, min_length=1000)
 
-    chapter_sample = current_chapter.content[:1000] if current_chapter.content else ""
-    ai_prephrase = get_ai_prephrase(
+    # Check if summary is cached to avoid unnecessary first chapter extraction
+    summary_cache_key = f"{book_id}_summary"
+    summary = _load_cached_summary(summary_cache_key)
+
+    if not summary:
+        # Only extract first chapter if summary not cached
+        first_chapter_clean = _extract_text_content(book.spine[0].content if book.spine else "", min_length=1000)
+        summary = get_book_summary_cached(
+            book_id,
+            book.metadata.title,
+            ", ".join(book.metadata.authors),
+            first_chapter_clean
+        )
+
+    # Get chapter prephrase (uses cached summary as context)
+    ai_prephrase = get_chapter_prephrase(
         book_id,
         book.metadata.title,
         ", ".join(book.metadata.authors),
-        chapter_sample,
+        chapter_clean,
         summary
     )
 
     ai_conclusion = get_ai_conclusion(
         book_id,
-        current_chapter.content,
+        chapter_clean,
         book.metadata.title,
         ", ".join(book.metadata.authors),
         summary
@@ -384,13 +392,12 @@ async def serve_any_image(image_name: str):
     if not any(image_name.lower().endswith(ext) for ext in ('.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg')):
         raise HTTPException(status_code=404, detail="Not an image")
 
-    book_folder = _get_book_folder()
-    if not book_folder:
+    if not CURRENT_BOOK_FOLDER:
         raise HTTPException(status_code=404, detail="Book not found")
 
     safe_image_name = os.path.basename(image_name)
 
-    img_path = os.path.join(BOOKS_DIR, book_folder, "images", safe_image_name)
+    img_path = os.path.join(BOOKS_DIR, CURRENT_BOOK_FOLDER, "images", safe_image_name)
 
     if not os.path.exists(img_path):
         raise HTTPException(status_code=404, detail="Image not found")
@@ -421,7 +428,10 @@ if __name__ == "__main__":
 
     epub_file = sys.argv[1]
     assert os.path.exists(epub_file), "File not found."
-    out_dir = os.path.splitext(epub_file)[0] + "_data"
+
+    # Always store book data in .data folder in project directory
+    book_name = os.path.splitext(os.path.basename(epub_file))[0]
+    out_dir = os.path.join(".data", book_name + "_data")
 
     # Process the book
     book_obj = process_epub(epub_file, out_dir)
@@ -432,6 +442,9 @@ if __name__ == "__main__":
     print(f"Authors: {', '.join(book_obj.metadata.authors)}")
     print(f"Chapters: {len(book_obj.spine)}")
     print(f"Images: {len(book_obj.images)}")
+
+    # Set current book folder for the server (just the folder name, not path)
+    globals()['CURRENT_BOOK_FOLDER'] = book_name + "_data"
 
     # Find available port (prefer 8123)
     port = find_available_port()
