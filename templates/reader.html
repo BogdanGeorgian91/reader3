@@ -38,7 +38,7 @@
 
     </style>
 </head>
-<body>
+<body data-book-id="{{ book_id }}" data-book-title="{{ book.metadata.title }}" data-book-author="{{ book.metadata.authors|join(', ') }}" data-book-summary="{{ book_summary|replace('"', '&quot;') }}">
 
     <!-- SIDEBAR -->
     <div id="sidebar">
@@ -160,6 +160,16 @@
                 console.log("Could not find index for", filename);
             }
         }
+
+        // Get book context for Claude Code
+        window.getBookContext = function() {
+            return {
+                bookId: document.body.dataset.bookId,
+                title: document.body.dataset.bookTitle,
+                author: document.body.dataset.bookAuthor,
+                summary: document.body.dataset.bookSummary
+            };
+        };
     </script>
 </body>
 </html>

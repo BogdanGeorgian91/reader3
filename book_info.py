@@ -70,11 +70,15 @@ def get_book_summary(book_id: str, title: str, author: str, content_sample: str)
         client = anthropic.Anthropic(api_key=api_key)
         message = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=256,
+            max_tokens=300,
             messages=[
                 {
                     "role": "user",
-                    "content": f"""Summarize this book in one compact paragraph (2-3 sentences).
+                    "content": f"""Write an engaging, intriguing one-paragraph summary of this book (3-4 sentences). The summary should:
+- Hook the reader with what makes the book interesting
+- Briefly describe the main plot/topic and protagonist
+- Hint at the core conflict or central theme
+- Be elegant and literary in tone
 
 Book: {title} by {author}
 

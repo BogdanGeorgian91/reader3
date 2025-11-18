@@ -119,6 +119,29 @@ async def read_chapter(request: Request, book_id: str, chapter_index: int):
         "book_summary": summary
     })
 
+@app.get("/api/book/{book_id}/info")
+async def get_book_info(book_id: str):
+    """Get book info (title, author, summary) for context."""
+    book = load_book_cached(book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    content_sample = book.spine[0].content[:1000] if book.spine else ""
+    summary = get_book_summary(
+        book_id,
+        book.metadata.title,
+        ", ".join(book.metadata.authors),
+        content_sample
+    )
+
+    return {
+        "title": book.metadata.title,
+        "author": ", ".join(book.metadata.authors),
+        "summary": summary,
+        "chapters": len(book.spine)
+    }
+
+
 @app.get("/read/{book_id}/images/{image_name}")
 async def serve_image(book_id: str, image_name: str):
     """
