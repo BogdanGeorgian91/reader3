@@ -1,11 +1,13 @@
 """
 Book info summarization module.
 
-Fetches compact one-paragraph summaries of books using Claude CLI.
+Fetches compact summaries and AI context for books using Claude CLI.
 Caches results for future requests.
 """
 
+import hashlib
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -43,7 +45,40 @@ def _save_summary(book_id: str, summary: str) -> None:
         pass
 
 
-def get_ai_prephrase(book_id: str, title: str, author: str, content_sample: str) -> str:
+def _fetch_from_claude(prompt: str) -> Optional[str]:
+    """Fetch a response from Claude Code CLI.
+
+    Args:
+        prompt: The prompt to send to Claude
+
+    Returns:
+        The response text, or None if the request failed
+    """
+    try:
+        result = subprocess.run(
+            ["claude", "-p", prompt],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+        if result.returncode == 0:
+            return result.stdout.strip()
+
+        error_msg = result.stderr.lower() if result.stderr else ""
+        if "auth" in error_msg or "unauthorized" in error_msg or "signed in" in error_msg:
+            return "Sign in to Claude Code CLI to enable this feature"
+        return None
+
+    except subprocess.TimeoutExpired:
+        return "Request timeout - try again later"
+    except FileNotFoundError:
+        return "Claude Code CLI not found"
+    except Exception:
+        return None
+
+
+def get_ai_prephrase(book_id: str, title: str, author: str, content_sample: str, book_summary: str = "") -> str:
     """
     Get or fetch an intriguing one-sentence hook before reading.
 
@@ -52,6 +87,7 @@ def get_ai_prephrase(book_id: str, title: str, author: str, content_sample: str)
         title: Book title
         author: Book author
         content_sample: First 1000 characters of book content
+        book_summary: Optional summary of the book for context
 
     Returns:
         One-sentence intriguing hook (10-20 words)
@@ -62,47 +98,31 @@ def get_ai_prephrase(book_id: str, title: str, author: str, content_sample: str)
     if cached:
         return cached
 
-    # Fetch from Claude CLI
-    try:
-        prompt = f"""Write a SHORT, punchy one-sentence summary that makes someone want to read immediately. It should be:
-- Intriguing and mysterious (what's the hook?)
-- Quick to read (10-20 words max)
-- Focus on what makes this book unmissable
-- Be vivid and compelling
+    # Build prompt with book context
+    context = f"Book overview: {book_summary}\n\n" if book_summary else ""
+    prompt = f"""Write a SHORT, punchy one-sentence hook that makes someone DESPERATE to read this chapter. It should:
+- Extract a specific intriguing detail, event, or character moment from the content
+- Raise a compelling question or hint at conflict/tension/mystery
+- Use vivid, sensory language (not generic)
+- Be 10-20 words max
+- Focus on what actually happens in this text, not the book premise
 
 Book: {title} by {author}
 
-First 1000 characters:
+{context}Chapter content sample:
 {content_sample}
 
-Provide only the summary, no other text."""
+Provide ONLY the one-sentence hook, no other text."""
 
-        result = subprocess.run(
-            ["claude", "-p", prompt],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-
-        if result.returncode == 0:
-            summary = result.stdout.strip()
-            _save_summary(cache_key, summary)
-            return summary
-        else:
-            error_msg = result.stderr.lower() if result.stderr else ""
-            if "auth" in error_msg or "unauthorized" in error_msg or "signed in" in error_msg:
-                return "Sign in to Claude Code CLI to enable AI Prephrase"
-            return "Unable to generate prephrase"
-
-    except subprocess.TimeoutExpired:
-        return "Prephrase timeout - try again later"
-    except FileNotFoundError:
-        return "Claude Code CLI not found"
-    except Exception:
-        return "Unable to generate prephrase"
+    # Fetch from Claude CLI
+    result = _fetch_from_claude(prompt)
+    if result:
+        _save_summary(cache_key, result)
+        return result
+    return "Unable to generate prephrase"
 
 
-def get_ai_conclusion(book_id: str, chapter_content: str, title: str, author: str) -> str:
+def get_ai_conclusion(book_id: str, chapter_content: str, title: str, author: str, book_summary: str = "") -> str:
     """
     Get or fetch a conclusion summarizing key points from a chapter.
 
@@ -111,27 +131,25 @@ def get_ai_conclusion(book_id: str, chapter_content: str, title: str, author: st
         chapter_content: Content of the current chapter
         title: Book title
         author: Book author
+        book_summary: Optional summary of the book for context
 
     Returns:
         2-3 sentence conclusion consolidating knowledge
     """
     # Use chapter hash as part of cache key to avoid conflicts
-    import hashlib
     content_hash = hashlib.md5(chapter_content[:500].encode()).hexdigest()[:8]
     cache_key = f"{book_id}_conclusion_{content_hash}"
     cached = _load_cached_summary(cache_key)
     if cached:
         return cached
 
-    # Fetch from Claude CLI
-    try:
-        # Take first 3000 chars of chapter, stripping HTML if present
-        chapter_sample = chapter_content[:3000]
-        # Remove common HTML tags if present
-        import re
-        chapter_sample = re.sub(r'<[^>]+>', '', chapter_sample).strip()
+    # Take first 3000 chars of chapter, stripping HTML if present
+    chapter_sample = chapter_content[:3000]
+    chapter_sample = re.sub(r'<[^>]+>', '', chapter_sample).strip()
 
-        prompt = f"""Write a 2-3 sentence conclusion that consolidates the key knowledge and material from this chapter. It should:
+    # Build prompt with book context
+    context = f"Book overview: {book_summary}\n\n" if book_summary else ""
+    prompt = f"""Write a 2-3 sentence conclusion that consolidates the key knowledge and material from this chapter. It should:
 - Summarize the main points and developments
 - Connect to the overall narrative or themes
 - Help the reader retain and understand what they read
@@ -139,39 +157,22 @@ def get_ai_conclusion(book_id: str, chapter_content: str, title: str, author: st
 
 Book: {title} by {author}
 
-Chapter excerpt (first 2000 chars):
+{context}Chapter excerpt (first 2000 chars):
 {chapter_sample}
 
 Provide only the conclusion, no other text."""
 
-        result = subprocess.run(
-            ["claude", "-p", prompt],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-
-        if result.returncode == 0:
-            conclusion = result.stdout.strip()
-            _save_summary(cache_key, conclusion)
-            return conclusion
-        else:
-            error_msg = result.stderr.lower() if result.stderr else ""
-            if "auth" in error_msg or "unauthorized" in error_msg or "signed in" in error_msg:
-                return "Sign in to Claude Code CLI to enable AI Conclusion"
-            return "Unable to generate conclusion"
-
-    except subprocess.TimeoutExpired:
-        return "Conclusion timeout - try again later"
-    except FileNotFoundError:
-        return "Claude Code CLI not found"
-    except Exception:
-        return "Unable to generate conclusion"
+    # Fetch from Claude CLI
+    result = _fetch_from_claude(prompt)
+    if result:
+        _save_summary(cache_key, result)
+        return result
+    return "Unable to generate conclusion"
 
 
 def get_book_summary(book_id: str, title: str, author: str, content_sample: str) -> str:
     """
-    Get or fetch a one-paragraph summary of a book using Claude CLI.
+    Get or fetch an engaging summary of a book using Claude CLI.
 
     Args:
         book_id: Unique identifier for the book (for caching)
@@ -180,49 +181,31 @@ def get_book_summary(book_id: str, title: str, author: str, content_sample: str)
         content_sample: First 1000 characters of book content
 
     Returns:
-        One-paragraph summary (3-4 sentences)
+        Engaging, conversational summary (2-3 sentences)
     """
     # Check cache first
     cached = _load_cached_summary(book_id)
     if cached:
         return cached
 
-    # Fetch from Claude CLI
-    try:
-        prompt = f"""Write a SHORT, punchy one-sentence summary that makes someone want to read immediately. It should be:
-- Intriguing and mysterious (what's the hook?)
-- Quick to read (10-20 words max)
-- Focus on what makes this book unmissable
-- Be vivid and compelling
+    # Build prompt
+    prompt = f"""Write a 2-3 sentence summary that makes this book sound absolutely irresistible. It should:
+- Be vivid, conversational, and exciting (not formal or dull)
+- Capture the core tension or fascination that hooks readers
+- Use strong verbs and concrete imagery, not generic descriptions
+- Sound like you're recommending it to a friend, not writing a textbook
+- Focus on the experience and feeling, not plot mechanics
 
 Book: {title} by {author}
 
-First 1000 characters:
+Sample text:
 {content_sample}
 
-Provide only the summary, no other text."""
+Provide ONLY the summary, no other text."""
 
-        result = subprocess.run(
-            ["claude", "-p", prompt],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-
-        if result.returncode == 0:
-            summary = result.stdout.strip()
-            _save_summary(book_id, summary)
-            return summary
-        else:
-            # Claude CLI auth or error
-            error_msg = result.stderr.lower() if result.stderr else ""
-            if "auth" in error_msg or "unauthorized" in error_msg or "signed in" in error_msg:
-                return "Sign in to Claude Code CLI to enable book summaries"
-            return "Unable to generate summary"
-
-    except subprocess.TimeoutExpired:
-        return "Summarization timeout - try again later"
-    except FileNotFoundError:
-        return "Claude Code CLI not found"
-    except Exception as e:
-        return "Unable to generate summary"
+    # Fetch from Claude CLI
+    result = _fetch_from_claude(prompt)
+    if result:
+        _save_summary(book_id, result)
+        return result
+    return "Unable to generate summary"

@@ -108,11 +108,14 @@ async def read_chapter(request: Request, book_id: str, chapter_index: int):
     )
 
     # Get AI Prephrase (before chapter)
+    # Use current chapter content, not book sample
+    chapter_sample = current_chapter.content[:1000] if current_chapter.content else ""
     ai_prephrase = get_ai_prephrase(
         book_id,
         book.metadata.title,
         ", ".join(book.metadata.authors),
-        content_sample
+        chapter_sample,
+        summary
     )
 
     # Get AI Conclusion (after chapter)
@@ -120,7 +123,8 @@ async def read_chapter(request: Request, book_id: str, chapter_index: int):
         book_id,
         current_chapter.content,
         book.metadata.title,
-        ", ".join(book.metadata.authors)
+        ", ".join(book.metadata.authors),
+        summary
     )
 
     return templates.TemplateResponse("reader.html", {
