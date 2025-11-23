@@ -11,8 +11,8 @@ from fastapi.templating import Jinja2Templates
 from reader3 import Book, BookMetadata, ChapterContent, TOCEntry
 from claude_code_detect import get_claude_code_status
 from book_info import (
-    get_book_summary,
-    get_ai_prephrase,
+    get_book_summary_cached,
+    get_chapter_prephrase,
     get_ai_conclusion,
     get_paragraph_summaries,
 )
@@ -84,7 +84,7 @@ async def read_chapter(request: Request, book_id: str, chapter_index: int):
 
     # Get book summary for context
     content_sample = book.spine[0].content[:1000] if book.spine else ""
-    summary = get_book_summary(
+    summary = get_book_summary_cached(
         book_id,
         book.metadata.title,
         ", ".join(book.metadata.authors),
@@ -94,7 +94,7 @@ async def read_chapter(request: Request, book_id: str, chapter_index: int):
     # Get AI Prephrase (before chapter)
     # Use current chapter content, not book sample
     chapter_sample = current_chapter.content[:1000] if current_chapter.content else ""
-    ai_prephrase = get_ai_prephrase(
+    ai_prephrase = get_chapter_prephrase(
         book_id,
         book.metadata.title,
         ", ".join(book.metadata.authors),
